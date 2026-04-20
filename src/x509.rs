@@ -1,6 +1,7 @@
 use whitespace_sifter::WhitespaceSifter;
 use x509_parser::{
     der_parser::oid,
+    parse_x509_certificate,
     prelude::{
         ParsedExtension, TbsCertificateStructureValidator, Validator, VecLogger,
         X509ExtensionsValidator,
@@ -8,6 +9,19 @@ use x509_parser::{
     time::ASN1Time,
     x509::X509Name,
 };
+
+pub fn select_root<T: AsRef<[u8]>>(cert: T, root_store: Vec<Vec<u8>>) -> Option<Vec<u8>> {
+    let (_, cert) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
+    for c in root_store {
+        let Ok((_, root)) = parse_x509_certificate(c.as_slice()) else {
+            continue;
+        };
+        if are_x509_name_equal(&cert.issuer, &root.subject) {
+            return Some(c);
+        }
+    }
+    None
+}
 
 pub fn verify_chain_at(
     certs: Vec<Vec<u8>>,
