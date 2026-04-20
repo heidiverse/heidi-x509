@@ -8,7 +8,7 @@ x509-parser = { version = "0.16.0", features = ["verify", "validate"] }
 oid-registry = "0.7.0"
 ureq = { version = "3.3.0", optional = true }
 whitespace-sifter = "2.3.7"
-tracing = "0.1.44"
+tracing = "^0.1"
 
 
 [features]
