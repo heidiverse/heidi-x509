@@ -1,0 +1,21 @@
+[package]
+name = "heidi-x509"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+x509-parser = { version = "0.16.0", features = ["verify", "validate"] }
+oid-registry = "0.7.0"
+ureq = { version = "3.3.0", optional = true }
+whitespace-sifter = "2.3.7"
+tracing = "0.1.44"
+
+
+[features]
+default = ["crl"]
+uniffi = []
+crl = ["dep:ureq"]
+
+[dev-dependencies]
+flate2 = "1.1.9"
+tar = "0.4.45"
