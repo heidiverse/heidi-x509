@@ -27,6 +27,7 @@ pub fn verify_chain_at(
     certs: Vec<Vec<u8>>,
     time: ASN1Time,
     #[cfg(feature = "crl")] check_crl: bool,
+    check_basic_constraint: bool,
 ) -> bool {
     // a valid chain requires at least two certificates (leaf + issuer)
     if certs.len() < 2 {
@@ -67,12 +68,15 @@ pub fn verify_chain_at(
                 tracing::error!("issuer cert has incorrect key usage");
                 return false;
             }
-            match is_basic_constraint_fulfilled(&issuer_cert, current_position, total_path_len) {
-                Ok(false) | Err(_) => {
-                    tracing::error!("basic constraint not fullfileld");
-                    return false;
+            if check_basic_constraint {
+                match is_basic_constraint_fulfilled(&issuer_cert, current_position, total_path_len)
+                {
+                    Ok(false) | Err(_) => {
+                        tracing::error!("basic constraint not fullfileld");
+                        return false;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
 
             let is_valid = subject_cert
@@ -129,6 +133,7 @@ pub fn verify_chain(certs: Vec<Vec<u8>>) -> bool {
         ASN1Time::now(),
         #[cfg(feature = "crl")]
         true,
+        true,
     )
 }
 // key usage should be parsable and if present be certSign
@@ -151,23 +156,32 @@ fn is_basic_constraint_fulfilled(
     total_path_len: usize,
 ) -> Result<bool, ()> {
     let Ok(basic_constraints) = cert.get_extension_unique(&oid!(2.5.29.19)) else {
+        tracing::error!("No basic constraint found");
         return Err(());
     };
-    // It was parsed successfully but no CRL found
+    // It was parsed successfully but no basic constriants was found
     let Some(basic_constraints) = basic_constraints else {
+        tracing::error!("No basic constraint found");
         return Ok(false);
     };
     let ParsedExtension::BasicConstraints(basic_constraints) = basic_constraints.parsed_extension()
     else {
+        tracing::error!("No basic constraint found");
         return Err(());
     };
     // all intermediate have to have ca = true
     if !basic_constraints.ca {
+        tracing::error!("Ca is false");
         return Ok(false);
     }
     let remaining_path_len = total_path_len.saturating_sub(current_path_len);
     if let Some(path_constraint) = basic_constraints.path_len_constraint {
         if remaining_path_len > path_constraint as usize {
+            tracing::error!(
+                "Too many certificates in the path {} [{}]",
+                remaining_path_len,
+                path_constraint
+            );
             return Ok(false);
         }
     }
