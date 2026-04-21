@@ -22,6 +22,44 @@ pub fn select_root<T: AsRef<[u8]>>(cert: T, root_store: Vec<Vec<u8>>) -> Option<
     }
     None
 }
+pub fn is_self_signed_valid<T: AsRef<[u8]>>(cert: T) -> bool {
+    let Ok((_, issuer_cert)) = x509_parser::parse_x509_certificate(cert.as_ref()) else {
+        return false;
+    };
+    let mut logger = VecLogger::default();
+    let structure_validity = TbsCertificateStructureValidator.validate(&issuer_cert, &mut logger);
+    let x509_extensions_validity =
+        X509ExtensionsValidator.validate(&issuer_cert.extensions(), &mut logger);
+    if !(structure_validity && x509_extensions_validity) {
+        tracing::error!("subject cert has invalid structure");
+        return false;
+    }
+    if !is_key_usage_correct(&issuer_cert) {
+        tracing::error!("issuer cert has incorrect key usage");
+        return false;
+    }
+    let is_valid = issuer_cert
+        .verify_signature(Some(issuer_cert.public_key()))
+        .is_ok();
+    if !is_valid {
+        tracing::error!("signature invalid");
+        return false;
+    }
+    #[cfg(feature = "crl")]
+    match check_revocation(&issuer_cert) {
+        // certificate is revoked (on the CRL)
+        Ok(true) => return false,
+        // something went wrong
+        Err(_) => return false,
+        // network error or not on the list
+        _ => {}
+    }
+    if is_basic_constraint_fulfilled(&issuer_cert, 0, 0, false).is_err() {
+        tracing::error!("signature invalid");
+        return false;
+    }
+    true
+}
 
 pub fn verify_chain_at(
     certs: Vec<Vec<u8>>,
@@ -69,8 +107,7 @@ pub fn verify_chain_at(
                 return false;
             }
             if check_basic_constraint {
-                match is_basic_constraint_fulfilled(&issuer_cert, current_position, total_path_len)
-                {
+                match is_basic_constraint_true(&issuer_cert, current_position, total_path_len) {
                     Ok(false) | Err(_) => {
                         tracing::error!("basic constraint not fullfileld");
                         return false;
@@ -150,10 +187,18 @@ fn is_key_usage_correct(cert: &x509_parser::prelude::X509Certificate) -> bool {
 }
 
 /// Make sure signing certificates have cA true
+fn is_basic_constraint_true(
+    cert: &x509_parser::prelude::X509Certificate,
+    current_path_len: usize,
+    total_path_len: usize,
+) -> Result<bool, ()> {
+    is_basic_constraint_fulfilled(cert, current_path_len, total_path_len, true)
+}
 fn is_basic_constraint_fulfilled(
     cert: &x509_parser::prelude::X509Certificate,
     current_path_len: usize,
     total_path_len: usize,
+    ca: bool,
 ) -> Result<bool, ()> {
     let Ok(basic_constraints) = cert.get_extension_unique(&oid!(2.5.29.19)) else {
         tracing::error!("No basic constraint found");
@@ -170,19 +215,21 @@ fn is_basic_constraint_fulfilled(
         return Err(());
     };
     // all intermediate have to have ca = true
-    if !basic_constraints.ca {
-        tracing::error!("Ca is false");
+    if basic_constraints.ca != ca {
+        tracing::error!("Ca is {} but should be {}", basic_constraints.ca, ca);
         return Ok(false);
     }
-    let remaining_path_len = total_path_len.saturating_sub(current_path_len);
-    if let Some(path_constraint) = basic_constraints.path_len_constraint {
-        if remaining_path_len > path_constraint as usize {
-            tracing::error!(
-                "Too many certificates in the path {} [{}]",
-                remaining_path_len,
-                path_constraint
-            );
-            return Ok(false);
+    if ca {
+        let remaining_path_len = total_path_len.saturating_sub(current_path_len);
+        if let Some(path_constraint) = basic_constraints.path_len_constraint {
+            if remaining_path_len > path_constraint as usize {
+                tracing::error!(
+                    "Too many certificates in the path {} [{}]",
+                    remaining_path_len,
+                    path_constraint
+                );
+                return Ok(false);
+            }
         }
     }
     Ok(true)
