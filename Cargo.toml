@@ -19,3 +19,4 @@ crl = ["dep:ureq"]
 [dev-dependencies]
 flate2 = "1.1.9"
 tar = "0.4.45"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -10,19 +10,50 @@ use x509_parser::{
     x509::X509Name,
 };
 
-pub fn select_root<T: AsRef<[u8]>>(cert: T, root_store: Vec<Vec<u8>>) -> Option<Vec<u8>> {
+use crate::X509Error;
+
+pub fn select_root<T: AsRef<[u8]>>(cert: T, root_store: &Vec<Vec<u8>>) -> Option<Vec<u8>> {
     let (_, cert) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
     for c in root_store {
         let Ok((_, root)) = parse_x509_certificate(c.as_slice()) else {
             continue;
         };
         if are_x509_name_equal(&cert.issuer, &root.subject) {
-            return Some(c);
+            return Some(c.clone());
         }
     }
     None
 }
-pub fn is_self_signed_valid<T: AsRef<[u8]>>(cert: T) -> bool {
+
+pub fn complete_simple_chain(
+    chain: &mut Vec<Vec<u8>>,
+    trust_store: &Vec<Vec<u8>>,
+) -> Result<(), X509Error> {
+    let Some(last_element) = chain.last() else {
+        return Err(X509Error::EmptyChain);
+    };
+    if is_valid_ca(last_element) {
+        return Ok(());
+    }
+    let Some(root) = select_root(last_element.as_slice(), &trust_store) else {
+        return Err(X509Error::X509TrustError(crate::TrustError::NoRootFound));
+    };
+    chain.push(root);
+    Ok(())
+}
+
+/// This function checks integrity of a self signed certificate used to sign
+/// user signatures. If Basic Constraint is available it MUST be false
+pub fn is_self_signed_user_cert<T: AsRef<[u8]>>(cert: T) -> bool {
+    check_self_signed(cert, false, false)
+}
+/// This function checks, if the provided certificate is a valid CA (BasicConstrain cA = true).
+/// A CA MUST have the Basic Constraint extension!
+pub fn is_valid_ca<T: AsRef<[u8]>>(cert: T) -> bool {
+    check_self_signed(cert, true, true)
+}
+
+fn check_self_signed<T: AsRef<[u8]>>(cert: T, ca: bool, critical: bool) -> bool {
     let Ok((_, issuer_cert)) = x509_parser::parse_x509_certificate(cert.as_ref()) else {
         return false;
     };
@@ -54,11 +85,10 @@ pub fn is_self_signed_valid<T: AsRef<[u8]>>(cert: T) -> bool {
         // network error or not on the list
         _ => {}
     }
-    if is_basic_constraint_fulfilled(&issuer_cert, 0, 0, false).is_err() {
-        tracing::error!("signature invalid");
-        return false;
+    match is_basic_constraint_fulfilled(&issuer_cert, 0, 0, ca, critical) {
+        Ok(fulfilled) => fulfilled,
+        Err(_) => false,
     }
-    true
 }
 
 pub fn verify_chain_at(
@@ -76,6 +106,17 @@ pub fn verify_chain_at(
     let mut certs = certs;
     // the last (or rather first) certificate is not an intermediate and is not counted towards the path len
     let total_path_len = certs.len() - 1;
+
+    // check that the last certificate is self signed and valid
+    match certs.last() {
+        Some(last_cert) => {
+            if !is_valid_ca(last_cert) {
+                tracing::error!("trust anchor MUST be valid");
+                return false;
+            }
+        }
+        None => return false,
+    }
     let mut prev_cert = certs.pop();
     let mut current_position = 1;
     while let Some(issuer_cert) = prev_cert {
@@ -192,28 +233,26 @@ fn is_basic_constraint_true(
     current_path_len: usize,
     total_path_len: usize,
 ) -> Result<bool, ()> {
-    is_basic_constraint_fulfilled(cert, current_path_len, total_path_len, true)
+    is_basic_constraint_fulfilled(cert, current_path_len, total_path_len, true, true)
 }
 fn is_basic_constraint_fulfilled(
     cert: &x509_parser::prelude::X509Certificate,
     current_path_len: usize,
     total_path_len: usize,
     ca: bool,
+    critical: bool,
 ) -> Result<bool, ()> {
-    let Ok(basic_constraints) = cert.get_extension_unique(&oid!(2.5.29.19)) else {
-        tracing::error!("No basic constraint found");
+    let Ok(basic_constraints) = cert.basic_constraints() else {
+        tracing::error!("Invalid basic constraints");
         return Err(());
     };
     // It was parsed successfully but no basic constriants was found
     let Some(basic_constraints) = basic_constraints else {
         tracing::error!("No basic constraint found");
-        return Ok(false);
+        return Ok(!critical);
     };
-    let ParsedExtension::BasicConstraints(basic_constraints) = basic_constraints.parsed_extension()
-    else {
-        tracing::error!("No basic constraint found");
-        return Err(());
-    };
+
+    let basic_constraints = basic_constraints.value;
     // all intermediate have to have ca = true
     if basic_constraints.ca != ca {
         tracing::error!("Ca is {} but should be {}", basic_constraints.ca, ca);
@@ -337,6 +376,11 @@ mod tests {
     /// Tests regarding the CRL are currently ignored, as the certificates do not contain distribution points.
     ///
     fn test_x509_path_validation() {
+        use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
         let truth_table: HashMap<&str, bool> = [
             ("test1", true),
             ("test2", false),
@@ -434,6 +478,7 @@ mod tests {
             );
         }
         println!("{correct}/{total}");
+        assert_eq!(correct, total);
     }
 
     fn make_rdn<'a>(oid_parts: &[u64], value: &'a [u8]) -> RelativeDistinguishedName<'a> {
