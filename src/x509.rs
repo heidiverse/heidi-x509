@@ -248,7 +248,11 @@ fn is_basic_constraint_fulfilled(
     };
     // It was parsed successfully but no basic constriants was found
     let Some(basic_constraints) = basic_constraints else {
-        tracing::error!("No basic constraint found");
+        if critical {
+            tracing::error!("No basic constraint found");
+        } else {
+            tracing::info!("No basic constraint found");
+        }
         return Ok(!critical);
     };
 
