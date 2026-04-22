@@ -383,10 +383,10 @@ mod tests {
     ///
     fn test_x509_path_validation() {
         use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(fmt::layer())
             .with(EnvFilter::from_default_env())
-            .init();
+            .try_init();
         let truth_table: HashMap<&str, bool> = [
             ("test1", true),
             ("test2", false),
@@ -543,10 +543,10 @@ mod tests {
     #[test]
     fn test_chains() {
         use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(fmt::layer())
             .with(EnvFilter::from_default_env())
-            .init();
+            .try_init();
         let pems = pem::parse_many(include_str!("../test-chains/google.ch")).unwrap();
         let mut chain = pems
             .into_iter()
