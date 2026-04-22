@@ -10,7 +10,7 @@ use x509_parser::{
     x509::X509Name,
 };
 
-use crate::X509Error;
+use crate::{X509Error, crypto::verify_signature};
 
 pub fn select_root<T: AsRef<[u8]>>(cert: T, root_store: &Vec<Vec<u8>>) -> Option<Vec<u8>> {
     let (_, cert) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
@@ -69,9 +69,8 @@ fn check_self_signed<T: AsRef<[u8]>>(cert: T, ca: bool, critical: bool) -> bool 
         tracing::error!("issuer cert has incorrect key usage");
         return false;
     }
-    let is_valid = issuer_cert
-        .verify_signature(Some(issuer_cert.public_key()))
-        .is_ok();
+
+    let is_valid = verify_signature(&issuer_cert, &issuer_cert).is_ok();
     if !is_valid {
         tracing::error!("signature invalid");
         return false;
@@ -157,9 +156,7 @@ pub fn verify_chain_at(
                 }
             }
 
-            let is_valid = subject_cert
-                .verify_signature(Some(issuer_cert.public_key()))
-                .is_ok();
+            let is_valid = verify_signature(&issuer_cert, &subject_cert).is_ok();
             if !is_valid {
                 tracing::error!("signature invalid");
                 return false;
@@ -370,8 +367,13 @@ mod tests {
 
     use flate2::read::GzDecoder;
 
-    use x509_parser::der_parser::asn1_rs::{Any, Tag};
     use x509_parser::x509::{AttributeTypeAndValue, RelativeDistinguishedName, X509Name};
+    use x509_parser::{
+        der_parser::asn1_rs::{Any, Tag},
+        time::ASN1Time,
+    };
+
+    use crate::x509::verify_chain_at;
 
     use super::{are_x509_name_equal, verify_chain};
 
@@ -537,5 +539,37 @@ mod tests {
 
         assert!(!are_x509_name_equal(&empty, &nonempty));
         assert!(!are_x509_name_equal(&nonempty, &empty));
+    }
+    #[test]
+    fn test_chains() {
+        use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
+        let pems = pem::parse_many(include_str!("../test-chains/google.ch")).unwrap();
+        let mut chain = pems
+            .into_iter()
+            .map(|a| a.contents().to_vec())
+            .collect::<Vec<_>>();
+        chain.reverse();
+        assert!(verify_chain_at(
+            chain,
+            ASN1Time::from_timestamp(1776845275).unwrap(),
+            true,
+            true,
+        ));
+        let pems = pem::parse_many(include_str!("../test-chains/schweizmobil.ch")).unwrap();
+        let mut chain = pems
+            .into_iter()
+            .map(|a| a.contents().to_vec())
+            .collect::<Vec<_>>();
+        chain.reverse();
+        assert!(verify_chain_at(
+            chain,
+            ASN1Time::from_timestamp(1776845275).unwrap(),
+            true,
+            true,
+        ));
     }
 }
