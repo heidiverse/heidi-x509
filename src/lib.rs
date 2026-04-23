@@ -1,6 +1,7 @@
 pub mod crypto;
 pub mod x509;
 pub use x509_parser;
+pub use x509_parser::der_parser;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ParseError {
