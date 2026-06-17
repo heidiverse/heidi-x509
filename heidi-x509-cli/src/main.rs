@@ -4,21 +4,11 @@ use heidi_x509::x509_parser::{
     self,
     prelude::{X509Certificate, oid_registry},
 };
-use josekit::{
-    Value,
-    jwe::alg::{ecdh_es::PublicKey, pbes2_hmac_aeskw::MessageDigest},
-    jwk::{
-        Jwk,
-        alg::ec::{EcCurve, EcKeyPair},
-    },
-    jws::alg::ecdsa::EcdsaJwsAlgorithm::Es256,
-    util::oid::OID_ID_EC_PUBLIC_KEY,
-};
+use josekit::{Value, jwk::Jwk};
 use oid_registry::{
     OID_KEY_TYPE_EC_PUBLIC_KEY, OID_PKCS1_RSASSAPSS, OID_PKCS1_SHA1WITHRSA,
     OID_PKCS1_SHA256WITHRSA, OID_PKCS1_SHA384WITHRSA, OID_PKCS1_SHA512WITHRSA,
-    OID_SIG_ECDSA_WITH_SHA256, OID_SIG_ECDSA_WITH_SHA384, OID_SIG_ECDSA_WITH_SHA512, OID_SIG_ED448,
-    OID_SIG_ED25519,
+    OID_SIG_ECDSA_WITH_SHA384, OID_SIG_ECDSA_WITH_SHA512, OID_SIG_ED448, OID_SIG_ED25519,
 };
 use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts};
 
@@ -248,6 +238,11 @@ fn print_info(cert: &X509Certificate) {
         Some(uri) => println!("CRL: {uri}"),
         None => println!("No crl found"),
     }
+    let revocation_status =
+        heidi_x509::x509::check_revocation(&cert).expect("Failed to check revocation");
+    println!("[Revocation status] Certificate is revoked: {revocation_status}");
+    println!();
+    println!();
 }
 
 fn print_public_key(cert: &X509Certificate) {

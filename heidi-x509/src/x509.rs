@@ -311,6 +311,9 @@ pub fn get_crl_uri(cert: &x509_parser::prelude::X509Certificate) -> Result<Optio
         return Err(());
     };
     // We only look at the first point
+    if dist_points.points.len() > 1 {
+        tracing::warn!("MORE than 1 distribution points!");
+    }
     let Some(point) = dist_points.points.first() else {
         return Err(());
     };
@@ -342,11 +345,13 @@ pub fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<
         return Err(());
     };
     let Some(uri) = uri else {
+        tracing::warn!("CRL no URL");
         return Ok(false);
     };
     // fetch the revocation list
     let Ok(mut response) = ureq::get(&uri).call() else {
         // failed network requests are ignored
+        tracing::warn!("Failed to fetch CRL");
         return Ok(false);
     };
     let b = response.body_mut();
@@ -354,14 +359,20 @@ pub fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<
         // if the stream is somewhat broken, ignore!
         return Ok(false);
     };
+
     // we fetched something, but it fails to parse, error out
     let Ok((_, crl)) = x509_parser::parse_x509_crl(&list) else {
         return Err(());
     };
+
     let result = crl
         .iter_revoked_certificates()
         .find(|a| *a.serial() == cert.serial);
-    tracing::debug!("successfully loaded CRL, revoked: {}", result.is_some());
+    tracing::info!(
+        "successfully loaded CRL, revoked: {} [{}]",
+        result.is_some(),
+        crl.iter_revoked_certificates().count()
+    );
     Ok(result.is_some())
 }
 
