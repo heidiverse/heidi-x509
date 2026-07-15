@@ -276,7 +276,7 @@ fn is_basic_constraint_fulfilled(
 }
 
 /// compare x509 name removing trailing/leading bits and lowercasing
-fn are_x509_name_equal(left: &X509Name, right: &X509Name) -> bool {
+pub fn are_x509_name_equal(left: &X509Name, right: &X509Name) -> bool {
     left.iter().count() == right.iter().count()
         && left.iter().zip(right.iter()).all(|(l, r)| {
             l.iter().count() == r.iter().count()
@@ -289,11 +289,7 @@ fn are_x509_name_equal(left: &X509Name, right: &X509Name) -> bool {
         })
 }
 
-#[cfg(feature = "crl")]
-/// Simplified function for checking and fetching a CRL over URL
-///
-/// Note: *Network errors are ignored!*
-fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<bool, ()> {
+pub fn get_crl_uri(cert: &x509_parser::prelude::X509Certificate) -> Result<Option<String>, ()> {
     // log_debug!("X509", "checking revocation");
     // We have a parse error, return err
 
@@ -306,7 +302,7 @@ fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<bool
     };
     // It was parsed successfully but no CRL found
     let Some(crl_distribution_points) = maybe_dist_points else {
-        return Ok(false);
+        return Ok(None);
     };
     // Something is terribly wrong, as we should have matched to the OID before
     let ParsedExtension::CRLDistributionPoints(dist_points) =
@@ -315,6 +311,9 @@ fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<bool
         return Err(());
     };
     // We only look at the first point
+    if dist_points.points.len() > 1 {
+        tracing::warn!("MORE than 1 distribution points!");
+    }
     let Some(point) = dist_points.points.first() else {
         return Err(());
     };
@@ -334,9 +333,25 @@ fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<bool
     let GeneralName::URI(uri) = full_name else {
         return Err(());
     };
+    Ok(Some(uri.to_string()))
+}
+
+#[cfg(feature = "crl")]
+/// Simplified function for checking and fetching a CRL over URL
+///
+/// Note: *Network errors are ignored!*
+pub fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<bool, ()> {
+    let Ok(uri) = get_crl_uri(cert) else {
+        return Err(());
+    };
+    let Some(uri) = uri else {
+        tracing::warn!("CRL no URL");
+        return Ok(false);
+    };
     // fetch the revocation list
-    let Ok(mut response) = ureq::get(*uri).call() else {
+    let Ok(mut response) = ureq::get(&uri).call() else {
         // failed network requests are ignored
+        tracing::warn!("Failed to fetch CRL");
         return Ok(false);
     };
     let b = response.body_mut();
@@ -344,17 +359,20 @@ fn check_revocation(cert: &x509_parser::prelude::X509Certificate) -> Result<bool
         // if the stream is somewhat broken, ignore!
         return Ok(false);
     };
+
     // we fetched something, but it fails to parse, error out
     let Ok((_, crl)) = x509_parser::parse_x509_crl(&list) else {
         return Err(());
     };
+
     let result = crl
         .iter_revoked_certificates()
         .find(|a| *a.serial() == cert.serial);
-    // log_debug!(
-    //     "X509",
-    //     &format!("successfully loaded CRL, revoked: {}", result.is_some())
-    // );
+    tracing::info!(
+        "successfully loaded CRL, revoked: {} [{}]",
+        result.is_some(),
+        crl.iter_revoked_certificates().count()
+    );
     Ok(result.is_some())
 }
 
