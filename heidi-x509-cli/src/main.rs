@@ -12,7 +12,7 @@ use oid_registry::{
 };
 use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts};
 
-/// Simple program to greet a person
+/// Small tool to verify/look at simple x509 certificates and chains
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -26,7 +26,7 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// does testing things
+    /// Get either bei oid or by predefined "Keywords"
     Get {
         #[arg(short, long)]
         oid: Option<String>,
@@ -34,7 +34,7 @@ enum Commands {
         what: Option<What>,
     },
     Validate {
-        /// Name of the person to greet
+        /// Validate the certificate and optionally the chain
         #[arg(short, long)]
         chain: Option<String>,
     },
