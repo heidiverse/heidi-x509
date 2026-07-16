@@ -2,10 +2,14 @@ use josekit::{JoseError, jwe::alg::pbes2_hmac_aeskw::MessageDigest};
 use oid_registry::{
     OID_PKCS1_RSASSAPSS, OID_PKCS1_SHA1WITHRSA, OID_PKCS1_SHA256WITHRSA, OID_PKCS1_SHA384WITHRSA,
     OID_PKCS1_SHA512WITHRSA, OID_SIG_ECDSA_WITH_SHA256, OID_SIG_ECDSA_WITH_SHA384,
-    OID_SIG_ECDSA_WITH_SHA512, OID_SIG_ED448, OID_SIG_ED25519,
+    OID_SIG_ECDSA_WITH_SHA512, OID_SIG_ED448, OID_SIG_ED25519, Oid,
 };
 use rsa::pkcs8::DecodePublicKey;
-use x509_parser::prelude::X509Certificate;
+use x509_parser::{der_parser::oid, prelude::X509Certificate};
+
+pub const OID_SIG_MLDSA44: Oid<'static> = oid!(2.16.840.1.101.3.4.3.17);
+pub const OID_SIG_MLDSA65: Oid<'static> = oid!(2.16.840.1.101.3.4.3.18);
+pub const OID_SIG_MLDSA87: Oid<'static> = oid!(2.16.840.1.101.3.4.3.19);
 
 #[derive(Debug, Clone, Copy)]
 pub enum SignatureError {
@@ -96,8 +100,50 @@ pub fn verify_signature(
                 tracing::error!("{e}");
                 SignatureError::InvalidSignature
             })?;
+    } else if subject_alg == OID_SIG_MLDSA44 {
+        #[cfg(feature = "pqc")]
+        {
+            tracing::info!("verifying ml-dsa");
+            let verifier = josekit::jws::MlDSA44.verifier_from_der(issuer.public_key().raw)?;
+            verifier.verify(subject.tbs_certificate.as_ref(), signature.as_ref())?;
+        }
+        #[cfg(not(feature = "pqc"))]
+        {
+            tracing::error!(
+                "found certificate with ML-DSA signature and the feature is disabled. Rebuild the library with the `pqc` feature enabled"
+            );
+            return Err(SignatureError::UnknownAlgorithm);
+        }
+    } else if subject_alg == OID_SIG_MLDSA65 {
+        #[cfg(feature = "pqc")]
+        {
+            tracing::info!("verifying ml-dsa");
+            let verifier = josekit::jws::MlDSA65.verifier_from_der(issuer.public_key().raw)?;
+            verifier.verify(subject.tbs_certificate.as_ref(), signature.as_ref())?;
+        }
+        #[cfg(not(feature = "pqc"))]
+        {
+            tracing::error!(
+                "found certificate with ML-DSA signature and the feature is disabled. Rebuild the library with the `pqc` feature enabled"
+            );
+            return Err(SignatureError::UnknownAlgorithm);
+        }
+    } else if subject_alg == OID_SIG_MLDSA87 {
+        #[cfg(feature = "pqc")]
+        {
+            tracing::info!("verifying ml-dsa");
+            let verifier = josekit::jws::MlDSA87.verifier_from_der(issuer.public_key().raw)?;
+            verifier.verify(subject.tbs_certificate.as_ref(), signature.as_ref())?;
+        }
+        #[cfg(not(feature = "pqc"))]
+        {
+            tracing::error!(
+                "found certificate with ML-DSA signature and the feature is disabled. Rebuild the library with the `pqc` feature enabled"
+            );
+            return Err(SignatureError::UnknownAlgorithm);
+        }
     } else {
-        tracing::error!("unsupported algorithm");
+        tracing::error!("unsupported algorithm {}", subject_alg);
         return Err(SignatureError::UnknownAlgorithm);
     }
 

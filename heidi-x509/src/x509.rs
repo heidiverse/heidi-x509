@@ -391,7 +391,7 @@ mod tests {
         time::ASN1Time,
     };
 
-    use crate::x509::verify_chain_at;
+    use crate::x509::{is_valid_ca, verify_chain_at};
 
     use super::{are_x509_name_equal, verify_chain};
 
@@ -589,5 +589,16 @@ mod tests {
             true,
             true,
         ));
+    }
+    #[test]
+    fn test_mldsa_cert() {
+        use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+        let _ = tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .try_init();
+        let pem = pem::parse(include_str!("../test-chains/mldsa-cert.crt")).unwrap();
+
+        assert!(is_valid_ca(pem.contents()));
     }
 }
